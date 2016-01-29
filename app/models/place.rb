@@ -1,7 +1,5 @@
 class Place
     
-  attr_accessor :id, :formatted_address, :location, :address_components
-  
   # Wipe out 'places' collection and reload from JSON file. Should return 39.
   def self.reset(file_path=nil) 
     json_file = "./db/places.json"
@@ -9,6 +7,8 @@ class Place
     result = load_all(File.open(json_file))
     return result.inserted_count
   end
+    
+  # Places Collection ---------------------------------------------------------
     
   def self.mongo_client
     Mongoid::Clients.default
@@ -21,6 +21,24 @@ class Place
   def self.load_all(file) 
     collection.insert_many(JSON.parse(file.read))
   end
+
+  attr_accessor :id, :formatted_address, :location, :address_components
+  
+  def initialize(params)
+    @id = params[:_id].to_s
+    @formatted_address = params[:formatted_address]
+    @location = Point.new(params[:geometry][:geolocation])
+    
+    @address_components = []
+    
+    if params[:address_components]
+      params[:address_components].each do |a|
+        @address_components << AddressComponent.new(a)
+      end
+    end
+  end
+  
+  # Standard Queries ----------------------------------------------------------
 
   def self.find_by_short_name(search)
     collection.find(:"address_components.short_name" => search)
@@ -48,7 +66,13 @@ class Place
     end
   end
   
-  # The get the same output as the notes skip 48 not 200:
+  def destroy
+    self.class.collection.delete_one(:_id=>BSON::ObjectId.from_string(@id))
+  end
+  
+  # Aggregation Framework Queries ---------------------------------------------
+  
+  # To get the same output as the notes skip 48 not 200:
   #   pp Place.get_address_components({:_id=>-1},48,3).to_a; nil
   
   def self.get_address_components(sort=nil, offset=nil, limit=nil)
@@ -99,21 +123,29 @@ class Place
 
     collection.find.aggregate(pipeline).to_a.map { |item| item[:_id].to_s }
   end
-
-  # Instance methods from here.
-
-  def initialize(params)
-    @id = params[:_id].to_s
-    @formatted_address = params[:formatted_address]
-    @location = Point.new(params[:geometry][:geolocation])
-    
-    @address_components = []
-    params[:address_components].each do |a|
-      @address_components << AddressComponent.new(a)
-    end
+  
+  # Geolocation Queries -------------------------------------------------------
+  
+  def self.create_indexes
+    collection.indexes.create_one({:"geometry.geolocation" =>Mongo::Index::GEO2DSPHERE})
   end
   
-  def destroy
-    self.class.collection.delete_one(:_id=>BSON::ObjectId.from_string(@id))
+  def self.remove_indexes
+    collection.indexes.drop_one("geometry.geolocation_2dsphere")
   end
+  
+  def self.near(point, max_meters=nil)
+    search_spec = { :$near => { :$geometry => point.to_hash } } 
+    
+    if max_meters
+      search_spec[:$near][:$maxDistance] = max_meters
+    end
+
+    collection.find(:"geometry.geolocation" => search_spec)
+  end
+
+  def near(max_meters=nil)
+    self.class.to_places(self.class.near(@location, max_meters))
+  end
+
 end
