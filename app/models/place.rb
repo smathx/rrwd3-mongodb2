@@ -1,8 +1,7 @@
 class Place
     
   # Wipe out 'places' collection and reload from JSON file. Should return 39.
-  def self.reset(file_path=nil) 
-    json_file = "./db/places.json"
+  def self.reset(json_file="./db/places.json")
     collection.delete_many({})
     result = load_all(File.open(json_file))
     return result.inserted_count

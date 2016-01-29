@@ -1,4 +1,16 @@
 class Photo
+  
+  # Remove existing photos and reload.
+  def self.reset  
+    all.each { |photo| photo.destroy }  
+    
+    (1..6).each { |n|
+      photo = Photo.new 
+      photo.contents = File.open("./db/image#{n}.jpg")
+      photo.save
+    }
+    return mongo_client.database.fs.find.count
+  end
     
   # Photos Collection ---------------------------------------------------------
     
@@ -16,6 +28,7 @@ class Photo
     
     if params[:metadata]
       @location = Point.new(params[:metadata][:location])
+      @place = params[:metadata][:place]
     end
   end
   
@@ -24,30 +37,42 @@ class Photo
   end
   
   def save
-    if !persisted? and @contents
+    if !persisted?
+      if @contents
+        gps = EXIFR::JPEG.new(@contents).gps
+        @contents.rewind
       
-      gps = EXIFR::JPEG.new(@contents).gps
-      @contents.rewind
+        @location = Point.new(:lng => gps.longitude, :lat => gps.latitude)
       
-      @location = Point.new(:lng => gps.longitude, :lat => gps.latitude)
+        description = {}
+        description[:content_type] = "image/jpeg"
       
-      description = {}
-      description[:content_type] = "image/jpeg"
-      
-      description[:metadata] = {}
-      description[:metadata][:location] = @location.to_hash
+        description[:metadata] = {}
 
-      grid_file = Mongo::Grid::File.new(@contents.read, description)
-      _id = self.class.mongo_client.database.fs.insert_one(grid_file)
+        description[:metadata][:location] = @location.to_hash
+        description[:metadata][:place] = @place
+
+        grid_file = Mongo::Grid::File.new(@contents.read, description)
+        _id = self.class.mongo_client.database.fs.insert_one(grid_file)
       
-      @id = _id.to_s
+        @id = _id.to_s
+      end
+    else
+      bson_id = BSON::ObjectId.from_string(@id)
+      
+      metadata = {}
+      metadata[:"metadata.location"] = @location.to_hash
+      metadata[:"metadata.place"] = @place
+      
+      self.class.mongo_client.database.fs.find(:_id => bson_id)
+        .update_one(:$set => metadata)
     end
     
     return @id
   end
   
   # TODO: limit(nil) is nil so use big number for now.
-  def self.all(offset=0, limit=9999999)
+  def self.all(offset=0, limit=99999999)
     photos = []
     mongo_client.database.fs.find.skip(offset).limit(limit).each do |item| 
       photos << Photo.new(item) 
@@ -77,6 +102,22 @@ class Photo
   def destroy
     bson_id = BSON::ObjectId.from_string(@id)
     self.class.mongo_client.database.fs.delete(bson_id)
+  end
+  
+  # Relationships -------------------------------------------------------------
+  
+  def find_nearest_place_id(max_meters)
+    # near() results are sorted nearest to furthest
+    result = Place.near(@location, max_meters).projection(_id: 1).first
+    return result ? result[:_id]: nil
+  end
+  
+  def place
+    return @place ? Place.find(@place.to_s): nil
+  end
+  
+  def place=(place_id)
+    @place = place_id
   end
   
 end
