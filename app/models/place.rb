@@ -1,6 +1,14 @@
 class Place
     
   attr_accessor :id, :formatted_address, :location, :address_components
+  
+  # Wipe out 'places' collection and reload from JSON file. Should return 39.
+  def self.reset(file_path=nil) 
+    json_file = "./db/places.json"
+    collection.delete_many({})
+    result = load_all(File.open(json_file))
+    return result.inserted_count
+  end
     
   def self.mongo_client
     Mongoid::Clients.default
@@ -39,6 +47,60 @@ class Place
       to_places collection.find.skip(offset)
     end
   end
+  
+  # The get the same output as the notes skip 48 not 200:
+  #   pp Place.get_address_components({:_id=>-1},48,3).to_a; nil
+  
+  def self.get_address_components(sort=nil, offset=nil, limit=nil)
+    pipeline = []
+    
+    pipeline << { :$unwind => "$address_components" }
+    pipeline << { :$project => { 
+                    :address_components => 1, 
+                    :formatted_address => 1, 
+                    :"geometry.geolocation" => 1
+                  } 
+                }
+                
+    if sort
+      pipeline << { :$sort => sort }
+    end
+    if offset
+      pipeline << { :$skip => offset }
+    end
+    if limit
+      pipeline << { :$limit => limit }
+    end
+              
+    collection.find.aggregate(pipeline)
+  end
+
+  def self.get_country_names
+    pipeline = []
+    
+    pipeline << { :$project => { 
+                   :"address_components.long_name" => 1,
+                   :"address_components.types" => 1
+                 } 
+               }
+    pipeline << { :$unwind => "$address_components" }
+    pipeline << { :$unwind => "$address_components.types" }
+    pipeline << { :$match => { :"address_components.types" => "country" }}
+    pipeline << { :$group => { :_id => "$address_components.long_name" } }
+    
+    collection.find.aggregate(pipeline).to_a.map { |item| item[:_id] }
+  end
+  
+  def self.find_ids_by_country_code(country_code)
+    pipeline = []
+    
+    pipeline << { :$match => { :"address_components.short_name" => country_code }}
+    pipeline << { :$project => { :_id => 1 } }
+
+    collection.find.aggregate(pipeline).to_a.map { |item| item[:_id].to_s }
+  end
+
+  # Instance methods from here.
 
   def initialize(params)
     @id = params[:_id].to_s
