@@ -48,8 +48,7 @@ class Photo
         description[:content_type] = "image/jpeg"
       
         description[:metadata] = {}
-
-        description[:metadata][:location] = @location.to_hash
+        description[:metadata][:location] = @location.to_hash if !@location.nil?
         description[:metadata][:place] = @place
 
         grid_file = Mongo::Grid::File.new(@contents.read, description)
@@ -60,12 +59,13 @@ class Photo
     else
       bson_id = BSON::ObjectId.from_string(@id)
       
-      metadata = {}
-      metadata[:"metadata.location"] = @location.to_hash
-      metadata[:"metadata.place"] = @place
+      description = {}
+      description[:metadata] = {}
+      description[:metadata][:location] = @location.to_hash if !@location.nil?
+      description[:metadata][:place] = @place
       
       self.class.mongo_client.database.fs.find(:_id => bson_id)
-        .update_one(:$set => metadata)
+        .update_one(:$set => description)
     end
     
     return @id
@@ -116,8 +116,25 @@ class Photo
     return @place ? Place.find(@place.to_s): nil
   end
   
-  def place=(place_id)
-    @place = place_id
+  # 'thing' may be a String, BSON::ObjectId, or Place object. @place is
+  # always a BSON::ObjectId
+  def place=(thing)
+    @place =  case thing
+              when String 
+                BSON::ObjectId.from_string(thing)
+              when Place 
+                BSON::ObjectId.from_string(thing.id)
+              when BSON::ObjectId 
+                thing
+              else
+                nil
+              end
+  end
+  
+  # 'id' is either a BSON::ObjectId or a String.
+  def self.find_photos_for_place(id)
+    bson_id = BSON::ObjectId.from_string(id.to_s)
+    mongo_client.database.fs.find(:"metadata.place" => bson_id)
   end
   
 end

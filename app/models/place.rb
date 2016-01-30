@@ -147,4 +147,17 @@ class Place
     self.class.to_places(self.class.near(@location, max_meters))
   end
 
+  # Relationships -------------------------------------------------------------
+
+  def photos(offset=0, limit=99999999)
+    all_photos = []
+    
+    bson_id = BSON::ObjectId.from_string(@id)
+    Photo.mongo_client.database.fs.find(:"metadata.place" => bson_id)
+      .skip(offset).limit(limit).each do | item| 
+        all_photos << Photo.new(item) 
+      end
+    return all_photos
+  end
+
 end
