@@ -1,5 +1,10 @@
 class Place
-    
+  include ActiveModel::Model
+
+  def persisted?
+    !@id.nil?
+  end
+  
   # Wipe out 'places' collection and reload from JSON file. Should return 39.
   def self.reset(json_file="./db/places.json")
     collection.delete_many({})
